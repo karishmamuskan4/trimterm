@@ -1,5 +1,6 @@
 import { env } from "../config/env.js";
 import { COACH_PROMPT } from "../prompts/coachPrompt.js";
+import { TRANSCRIBE_PROMPT } from "../prompts/transcribePrompt.js";
 
 const TIMEOUT_MS = 20000;
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${env.geminiModel}:generateContent`;
@@ -10,7 +11,7 @@ function httpError(message, status) {
   return err;
 }
 
-function parseFeedback(text) {
+function parseFeedback(text, transcript) {
   const clean = text.replace(/```json|```/g, "").trim();
 
   let data;
@@ -21,11 +22,22 @@ function parseFeedback(text) {
   }
 
   const toList = (value) => (Array.isArray(value) ? value.map(String) : []);
+  const unique = (list) => [
+    ...new Set(list.map((t) => t.trim()).filter(Boolean)),
+  ];
+  const has = (haystack, term) =>
+    haystack.toLowerCase().includes(term.toLowerCase());
+
+  const tightAnswer = String(data.tightAnswer ?? "").trim();
 
   return {
-    tightAnswer: String(data.tightAnswer ?? ""),
-    termsHit: toList(data.termsHit),
-    termsMissed: toList(data.termsMissed).slice(0, 4),
+    tightAnswer,
+    termsHit: unique(toList(data.termsHit)).filter(
+      (t) => has(tightAnswer, t) && has(transcript, t),
+    ),
+    termsMissed: unique(toList(data.termsMissed))
+      .filter((t) => has(tightAnswer, t) && !has(transcript, t))
+      .slice(0, 4),
     factualIssues: toList(data.factualIssues),
     score: Math.min(10, Math.max(1, Math.round(Number(data.score)) || 1)),
   };
@@ -104,5 +116,42 @@ export async function getFeedback({ question, transcript }) {
     throw httpError("AI returned an empty response", 502);
   }
 
-  return parseFeedback(text);
+  return parseFeedback(text, transcript);
+}
+
+export async function transcribeAudio({ question, audioBase64 }) {
+  const data = await callGemini({
+    systemInstruction: { parts: [{ text: TRANSCRIBE_PROMPT }] },
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: `Interview question the student is answering: ${question}` },
+          { inlineData: { mimeType: "audio/wav", data: audioBase64 } },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0,
+    },
+  });
+
+  const text =
+    data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ??
+    "";
+
+  let transcript = "";
+  try {
+    const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+    transcript = String(parsed.transcript ?? "").trim();
+  } catch {
+    throw httpError("AI returned an invalid response", 502);
+  }
+
+  if (!transcript) {
+    throw httpError("No speech detected. Try again, a bit louder.", 422);
+  }
+
+  return transcript;
 }
