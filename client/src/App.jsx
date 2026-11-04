@@ -1,29 +1,43 @@
-import { useState } from "react";
-import { QUESTIONS } from "./data/questions";
-import { fetchFeedback } from "./api/feedback";
+import { useSpeech } from "./hooks/usespeech";
 
 export default function App() {
-  const [result, setResult] = useState("");
+  const {
+    supported,
+    listening,
+    transcript,
+    setTranscript,
+    error,
+    start,
+    stop,
+  } = useSpeech();
 
-  async function runTest() {
-    setResult("thinking...");
-    try {
-      const data = await fetchFeedback({
-        question: QUESTIONS[2].text,
-        transcript:
-          "json web token which is used for authentication and cookies that is different for each and every browser",
-      });
-      setResult(JSON.stringify(data, null, 2));
-    } catch (err) {
-      setResult(`Error: ${err.message}`);
-    }
+  if (!supported) {
+    return (
+      <main>
+        <h1>trimterm</h1>
+        <p>
+          This browser doesn't support speech recognition. Open it in Chrome or
+          Edge.
+        </p>
+      </main>
+    );
   }
 
   return (
     <main>
       <h1>trimterm</h1>
-      <button onClick={runTest}>Test feedback</button>
-      <pre style={{ whiteSpace: "pre-wrap" }}>{result}</pre>
+      <button onClick={listening ? stop : start}>
+        {listening ? "Stop" : "Start speaking"}
+      </button>
+      <p>{listening ? "Listening..." : "Mic off"}</p>
+      {error && <p style={{ color: "#ff6b6b" }}>{error}</p>}
+      <textarea
+        rows={6}
+        style={{ width: "100%" }}
+        value={transcript}
+        onChange={(e) => setTranscript(e.target.value)}
+        placeholder="Your transcript shows up here. You can edit it."
+      />
     </main>
   );
 }
